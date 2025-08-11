@@ -3,8 +3,8 @@
 namespace Database\Seeders;
 
 use App\Models\Menu;
-use Illuminate\Database\Seeder;
 use Faker\Factory as Faker;
+use Illuminate\Database\Seeder;
 
 class MenuSeeder extends Seeder
 {
@@ -14,7 +14,7 @@ class MenuSeeder extends Seeder
     public function run(): void
     {
         $faker = Faker::create('id_ID');
-        
+
         // Kategori menu
         $categories = [
             'Makanan Utama',
@@ -26,9 +26,9 @@ class MenuSeeder extends Seeder
             'Menu Spesial',
             'Menu Diet',
             'Menu Vegetarian',
-            'Menu Anak'
+            'Menu Anak',
         ];
-        
+
         // Nama-nama makanan dan minuman Indonesia
         $foodNames = [
             'Nasi Goreng', 'Mie Goreng', 'Sate Ayam', 'Gado-Gado', 'Rendang',
@@ -42,16 +42,16 @@ class MenuSeeder extends Seeder
             'Es Teh', 'Es Jeruk', 'Es Kelapa Muda', 'Es Cincau', 'Es Campur',
             'Jus Alpukat', 'Jus Mangga', 'Jus Jambu', 'Jus Sirsak', 'Jus Melon',
             'Kopi Tubruk', 'Kopi Susu', 'Teh Tawar', 'Teh Manis', 'Wedang Jahe',
-            'Wedang Uwuh', 'Bandrek', 'Bajigur', 'STMJ', 'Sekoteng'
+            'Wedang Uwuh', 'Bandrek', 'Bajigur', 'STMJ', 'Sekoteng',
         ];
-        
+
         // Generate 1000 menu items
         for ($i = 0; $i < 1000; $i++) {
-            $name = $faker->randomElement($foodNames) . ' ' . $faker->word;
+            $name = $faker->randomElement($foodNames).' '.$faker->word;
             $category = $faker->randomElement($categories);
             $price = $faker->numberBetween(10000, 150000);
             $orderCount = $faker->numberBetween(0, 500);
-            
+
             Menu::create([
                 'name' => $name,
                 'description' => $faker->paragraph(2),
@@ -59,7 +59,7 @@ class MenuSeeder extends Seeder
                 'price' => $price,
                 'order_count' => $orderCount,
                 'created_at' => $faker->dateTimeBetween('-1 year', 'now'),
-                'updated_at' => $faker->dateTimeBetween('-1 year', 'now')
+                'updated_at' => $faker->dateTimeBetween('-1 year', 'now'),
             ]);
         }
     }

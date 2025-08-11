@@ -284,7 +284,7 @@ return [
             'strategy' => env('VIZRA_ADK_CHUNK_STRATEGY', 'sentence'), // 'sentence' or 'paragraph'
             'chunk_size' => env('VIZRA_ADK_CHUNK_SIZE', 1000), // Characters per chunk
             'overlap' => env('VIZRA_ADK_CHUNK_OVERLAP', 200), // Overlap between chunks
-            'separators' => ["\n\n", "\n", ". ", ", ", " "],
+            'separators' => ["\n\n", "\n", '. ', ', ', ' '],
             'keep_separators' => true,
         ],
 

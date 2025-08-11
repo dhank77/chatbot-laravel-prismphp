@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Agents\CustomerSupportAgent;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -15,14 +16,91 @@ class ChatbotController extends Controller
 {
     // Whitelist konfigurasi
     protected array $whitelistTables = [
-        'menus' => ['id', 'name', 'description', 'category', 'price', 'order_count', 'created_at']
+        'menus' => ['id', 'name', 'description', 'category', 'price', 'order_count', 'created_at'],
     ];
+
+    protected ?CustomerSupportAgent $customerSupportAgent = null;
+
+    public function __construct()
+    {
+        $this->customerSupportAgent = new CustomerSupportAgent;
+    }
 
     protected int $maxLimit = 100;
 
-    public function index() : Response 
+    public function index(): Response
     {
         return Inertia::render('chatbot/index');
+    }
+
+    public function agentChat(Request $request)
+    {
+        $question = trim($request->input('message', ''));
+
+        if (empty($question)) {
+            return response()->json(['error' => 'Pesan kosong'], 400);
+        }
+
+        // Cek apakah request menerima event-stream
+        $wantsStream = $request->header('Accept') === 'text/event-stream';
+
+        try {
+            // Gunakan LLM untuk menjawab pertanyaan dengan bantuan MenuTool
+            $menuTool = new \App\Tools\MenuTool;
+
+            // Buat prompt untuk LLM
+            $prompt = "Anda adalah customer support untuk restoran. Jawab pertanyaan berikut: {$question}";
+
+            // Gunakan Prism untuk mendapatkan response
+            $response = Prism::text()
+                ->using(Provider::OpenAI, 'gpt-3.5-turbo')
+                ->withPrompt($prompt)
+                ->asText();
+
+            $answerText = trim($response->text);
+
+            // Pastikan encoding UTF-8
+            if (! mb_check_encoding($answerText, 'UTF-8')) {
+                $answerText = mb_convert_encoding($answerText, 'UTF-8', mb_detect_encoding($answerText));
+            }
+
+            if ($wantsStream) {
+                return response()->stream(
+                    function () use ($answerText) {
+                        // Stream response
+                        $chunks = preg_split('/(?<!\p{M})(?=\p{M}|\X)/u', $answerText);
+
+                        foreach ($chunks as $chunk) {
+                            echo $chunk;
+                            ob_flush();
+                            flush();
+                            usleep(10000);
+                        }
+                    },
+                    200,
+                    [
+                        'Cache-Control' => 'no-cache',
+                        'Content-Type' => 'text/plain; charset=utf-8',
+                        'X-Accel-Buffering' => 'no',
+                    ]
+                );
+            }
+
+            return response()->json([
+                'question' => $question,
+                'answer' => $answerText,
+            ], 200, [], JSON_UNESCAPED_UNICODE);
+
+        } catch (Throwable $e) {
+            Log::error('Agent Chat Error', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return response()->json([
+                'error' => 'Maaf, terjadi kesalahan saat memproses pesan Anda. Silakan coba lagi.',
+            ], 500);
+        }
     }
 
     public function chat(Request $request)
@@ -32,12 +110,12 @@ class ChatbotController extends Controller
         if (empty($question)) {
             return response()->json(['error' => 'Pesan kosong'], 400);
         }
-        
+
         // Cek apakah request menerima event-stream
         $wantsStream = $request->header('Accept') === 'text/event-stream';
 
         // 1) Minta LLM untuk mengembalikan **JSON terstruktur** (tidak SQL mentah)
-        $systemPrompt = <<<PROMPT
+        $systemPrompt = <<<'PROMPT'
 Kamu adalah assistant yang mengubah pertanyaan bahasa manusia menjadi JSON terstruktur untuk query database MySQL.
 Database hanya mengizinkan operasi SELECT. Output harus **HANYA** JSON valid (tidak ada teks lain).
 Schema JSON yang diharapkan:
@@ -78,8 +156,9 @@ PROMPT;
 
             $structured = json_decode($jsonResponse, true);
 
-            if (json_last_error() !== JSON_ERROR_NONE || !is_array($structured)) {
+            if (json_last_error() !== JSON_ERROR_NONE || ! is_array($structured)) {
                 Log::warning('LLM JSON parse error', ['raw' => $jsonResponse]);
+
                 return response()->json(['error' => 'Gagal memproses instruksi LLM (JSON invalid)'], 500);
             }
 
@@ -94,6 +173,7 @@ PROMPT;
 
         } catch (Throwable $e) {
             Log::error('Chatbot NL2STRUCT error', ['err' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
+
             return response()->json(['error' => 'Terjadi kesalahan internal'], 500);
         }
 
@@ -101,12 +181,12 @@ PROMPT;
         $answerPrompt = "
 Pertanyaan pelanggan: {$question}
 
-Data dari database (array JSON): " . json_encode($results) . "
+Data dari database (array JSON): ".json_encode($results).'
 
-Tolong jawab singkat, ramah, dan mudah dimengerti pelanggan (bahasa Indonesia). Jangan sertakan JSON, hanya jawaban teks.";
+Tolong jawab singkat, ramah, dan mudah dimengerti pelanggan (bahasa Indonesia). Jangan sertakan JSON, hanya jawaban teks.';
         $answer = Prism::text()
             ->using(Provider::Gemini, 'gemini-2.0-flash')
-            ->withSystemPrompt("Kamu adalah chatbot restoran yang menjawab pertanyaan pelanggan dengan bahasa santai dan jelas.")
+            ->withSystemPrompt('Kamu adalah chatbot restoran yang menjawab pertanyaan pelanggan dengan bahasa santai dan jelas.')
             ->withPrompt($answerPrompt)
             ->asText();
 
@@ -116,15 +196,15 @@ Tolong jawab singkat, ramah, dan mudah dimengerti pelanggan (bahasa Indonesia). 
                 function () use ($answer) {
                     // Ambil teks jawaban dan pastikan encoding UTF-8
                     $text = trim($answer->text);
-                    
+
                     // Konversi ke UTF-8 jika belum UTF-8
-                    if (!mb_check_encoding($text, 'UTF-8')) {
+                    if (! mb_check_encoding($text, 'UTF-8')) {
                         $text = mb_convert_encoding($text, 'UTF-8', mb_detect_encoding($text));
                     }
-                    
+
                     // Simulasi streaming karakter demi karakter
                     $chunks = preg_split('/(?<!\p{M})(?=\p{M}|\X)/u', $text);
-                    
+
                     foreach ($chunks as $chunk) {
                         echo $chunk;
                         ob_flush();
@@ -141,14 +221,14 @@ Tolong jawab singkat, ramah, dan mudah dimengerti pelanggan (bahasa Indonesia). 
                 ]
             );
         }
-        
+
         // Kembalikan hasil JSON jika tidak streaming
         // Pastikan encoding UTF-8 untuk respons JSON
         $answerText = trim($answer->text);
-        if (!mb_check_encoding($answerText, 'UTF-8')) {
+        if (! mb_check_encoding($answerText, 'UTF-8')) {
             $answerText = mb_convert_encoding($answerText, 'UTF-8', mb_detect_encoding($answerText));
         }
-        
+
         return response()->json([
             'question' => $question,
             'structured_query' => $structured,
@@ -162,61 +242,86 @@ Tolong jawab singkat, ramah, dan mudah dimengerti pelanggan (bahasa Indonesia). 
         // hapus ```json ... ``` atau ``` ... ```
         $s = preg_replace('/^```(?:json)?\s*/i', '', $s);
         $s = preg_replace('/\s*```$/', '', $s);
+
         return trim($s);
     }
 
     protected function validateStructuredQuery(array $q)
     {
         // Basic checks
-        if (!isset($q['action']) || strtolower($q['action']) !== 'select') {
+        if (! isset($q['action']) || strtolower($q['action']) !== 'select') {
             return 'Only select action allowed';
         }
 
-        if (!isset($q['table'])) {
+        if (! isset($q['table'])) {
             return 'Missing table';
         }
 
         $table = strtolower($q['table']);
-        if (!isset($this->whitelistTables[$table])) {
+        if (! isset($this->whitelistTables[$table])) {
             return "Table '{$table}' not allowed";
         }
 
         $allowedCols = $this->whitelistTables[$table];
         // columns
         if (isset($q['columns'])) {
-            if (!is_array($q['columns'])) return 'columns must be array';
+            if (! is_array($q['columns'])) {
+                return 'columns must be array';
+            }
             foreach ($q['columns'] as $col) {
-                if (!in_array($col, $allowedCols)) return "column '{$col}' not allowed";
+                if (! in_array($col, $allowedCols)) {
+                    return "column '{$col}' not allowed";
+                }
             }
         }
 
         // filters
         if (isset($q['filters'])) {
-            if (!is_array($q['filters'])) return 'filters must be array';
-            $allowedOps = ['=','!=','>','<','>=','<=','like','in'];
+            if (! is_array($q['filters'])) {
+                return 'filters must be array';
+            }
+            $allowedOps = ['=', '!=', '>', '<', '>=', '<=', 'like', 'in'];
             foreach ($q['filters'] as $f) {
-                if (!isset($f['column'], $f['op'], $f['value'])) return 'filter missing fields';
-                if (!in_array($f['column'], $allowedCols)) return "filter column '{$f['column']}' not allowed";
-                if (!in_array(strtolower($f['op']), $allowedOps)) return "filter op '{$f['op']}' not allowed";
+                if (! isset($f['column'], $f['op'], $f['value'])) {
+                    return 'filter missing fields';
+                }
+                if (! in_array($f['column'], $allowedCols)) {
+                    return "filter column '{$f['column']}' not allowed";
+                }
+                if (! in_array(strtolower($f['op']), $allowedOps)) {
+                    return "filter op '{$f['op']}' not allowed";
+                }
             }
         }
 
         // order_by
         if (isset($q['order_by'])) {
-            if (!is_array($q['order_by'])) return 'order_by must be array';
+            if (! is_array($q['order_by'])) {
+                return 'order_by must be array';
+            }
             foreach ($q['order_by'] as $o) {
-                if (!isset($o['column'])) return 'order_by.column missing';
-                if (!in_array($o['column'], $allowedCols)) return "order_by column '{$o['column']}' not allowed";
+                if (! isset($o['column'])) {
+                    return 'order_by.column missing';
+                }
+                if (! in_array($o['column'], $allowedCols)) {
+                    return "order_by column '{$o['column']}' not allowed";
+                }
                 $dir = strtolower($o['direction'] ?? 'asc');
-                if (!in_array($dir, ['asc','desc'])) return 'order_by.direction invalid';
+                if (! in_array($dir, ['asc', 'desc'])) {
+                    return 'order_by.direction invalid';
+                }
             }
         }
 
         // limit
         if (isset($q['limit'])) {
-            if (!is_int($q['limit']) && !ctype_digit((string)$q['limit'])) return 'limit must be integer';
-            $limit = (int)$q['limit'];
-            if ($limit < 1 || $limit > $this->maxLimit) return "limit must be between 1 and {$this->maxLimit}";
+            if (! is_int($q['limit']) && ! ctype_digit((string) $q['limit'])) {
+                return 'limit must be integer';
+            }
+            $limit = (int) $q['limit'];
+            if ($limit < 1 || $limit > $this->maxLimit) {
+                return "limit must be between 1 and {$this->maxLimit}";
+            }
         }
 
         return true;
@@ -225,11 +330,11 @@ Tolong jawab singkat, ramah, dan mudah dimengerti pelanggan (bahasa Indonesia). 
     protected function executeStructuredQuery(array $q)
     {
         $table = $q['table'];
-        $cols = $q['columns'] ?? ['name','price','description','category'];
+        $cols = $q['columns'] ?? ['name', 'price', 'description', 'category'];
 
         $qb = DB::table($table)->select($cols);
 
-        if (!empty($q['filters'])) {
+        if (! empty($q['filters'])) {
             foreach ($q['filters'] as $f) {
                 $col = $f['column'];
                 $op = strtolower($f['op']);
@@ -241,8 +346,10 @@ Tolong jawab singkat, ramah, dan mudah dimengerti pelanggan (bahasa Indonesia). 
                     $qb->where($col, 'like', $val);
                 } else {
                     // operator mapping safe
-                    $allowed = ['=','!=','>','<','>=','<='];
-                    if (!in_array($op, $allowed)) continue;
+                    $allowed = ['=', '!=', '>', '<', '>=', '<='];
+                    if (! in_array($op, $allowed)) {
+                        continue;
+                    }
                     if ($op === '!=') {
                         $qb->where($col, '!=', $val);
                     } else {
@@ -252,22 +359,22 @@ Tolong jawab singkat, ramah, dan mudah dimengerti pelanggan (bahasa Indonesia). 
             }
         }
 
-        if (!empty($q['order_by'])) {
+        if (! empty($q['order_by'])) {
             foreach ($q['order_by'] as $o) {
                 $dir = strtolower($o['direction'] ?? 'asc') === 'desc' ? 'desc' : 'asc';
                 $qb->orderBy($o['column'], $dir);
             }
         }
 
-        if (!empty($q['limit'])) {
-            $qb->limit((int)$q['limit']);
+        if (! empty($q['limit'])) {
+            $qb->limit((int) $q['limit']);
         } else {
             $qb->limit(10); // default
         }
 
         // Execute and return array
         return $qb->get()->map(function ($row) {
-            return (array)$row;
+            return (array) $row;
         })->toArray();
     }
 }
