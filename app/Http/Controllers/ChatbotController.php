@@ -9,6 +9,7 @@ use Inertia\Inertia;
 use Inertia\Response;
 use Prism\Prism\Enums\Provider;
 use Prism\Prism\Prism;
+use Throwable;
 
 class ChatbotController extends Controller
 {
@@ -91,7 +92,7 @@ PROMPT;
             // Bangun query menggunakan Query Builder (AMAN)
             $results = $this->executeStructuredQuery($structured);
 
-        } catch (\Throwable $e) {
+        } catch (Throwable $e) {
             Log::error('Chatbot NL2STRUCT error', ['err' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
             return response()->json(['error' => 'Terjadi kesalahan internal'], 500);
         }
@@ -113,11 +114,16 @@ Tolong jawab singkat, ramah, dan mudah dimengerti pelanggan (bahasa Indonesia). 
         if ($wantsStream) {
             return response()->stream(
                 function () use ($answer) {
-                    // Ambil teks jawaban
+                    // Ambil teks jawaban dan pastikan encoding UTF-8
                     $text = trim($answer->text);
                     
+                    // Konversi ke UTF-8 jika belum UTF-8
+                    if (!mb_check_encoding($text, 'UTF-8')) {
+                        $text = mb_convert_encoding($text, 'UTF-8', mb_detect_encoding($text));
+                    }
+                    
                     // Simulasi streaming karakter demi karakter
-                    $chunks = str_split($text, 1);
+                    $chunks = preg_split('/(?<!\p{M})(?=\p{M}|\X)/u', $text);
                     
                     foreach ($chunks as $chunk) {
                         echo $chunk;
@@ -130,19 +136,25 @@ Tolong jawab singkat, ramah, dan mudah dimengerti pelanggan (bahasa Indonesia). 
                 200,
                 [
                     'Cache-Control' => 'no-cache',
-                    'Content-Type' => 'text/event-stream',
+                    'Content-Type' => 'text/plain; charset=utf-8',
                     'X-Accel-Buffering' => 'no', // Untuk Nginx
                 ]
             );
         }
         
         // Kembalikan hasil JSON jika tidak streaming
+        // Pastikan encoding UTF-8 untuk respons JSON
+        $answerText = trim($answer->text);
+        if (!mb_check_encoding($answerText, 'UTF-8')) {
+            $answerText = mb_convert_encoding($answerText, 'UTF-8', mb_detect_encoding($answerText));
+        }
+        
         return response()->json([
             'question' => $question,
             'structured_query' => $structured,
             'results' => $results,
-            'answer' => trim($answer->text),
-        ]);
+            'answer' => $answerText,
+        ], 200, [], JSON_UNESCAPED_UNICODE);
     }
 
     protected function stripMarkdownCodeFence(string $s): string

@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import MarkdownRenderer from '@/components/markdown-renderer';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -45,27 +46,34 @@ export default function Index(): React.ReactElement {
         body: JSON.stringify({ message: userMessage }),
       });
 
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
       const reader = response.body?.getReader();
       if (!reader) throw new Error('Response body is null');
 
+      let fullMessage = '';
+      setIsThinking(false);
+      
       // Process the stream
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         
-        // Convert the chunk to text and append to streaming message
-        const chunk = new TextDecoder().decode(value);
-        setStreamingMessage((prev: string) => prev + chunk);
+        // Convert the chunk to text with UTF-8 encoding and append to streaming message
+        const chunk = new TextDecoder('utf-8').decode(value);
+        fullMessage += chunk;
+        setStreamingMessage(fullMessage);
       }
 
       // When stream is complete, add the full message to the messages array
-      // Use the latest streamingMessage from the state update closure to ensure we have the complete message
-      setMessages((prev: Message[]) => [...prev, { role: 'assistant', content: streamingMessage }]);
-      // Only reset streaming message after we've added it to messages
+      setMessages((prev: Message[]) => [...prev, { role: 'assistant', content: fullMessage }]);
       setStreamingMessage('');
     } catch (error) {
       console.error('Error:', error);
-      setMessages((prev: Message[]) => [...prev, { role: 'assistant', content: 'Maaf, terjadi kesalahan saat memproses pesan Anda.' }]);
+      const errorMessage = error instanceof Error ? error.message : 'Terjadi kesalahan yang tidak diketahui';
+      setMessages((prev: Message[]) => [...prev, { role: 'assistant', content: `Maaf, terjadi kesalahan: ${errorMessage}` }]);
     } finally {
       setIsLoading(false);
       setIsThinking(false);
@@ -93,7 +101,11 @@ export default function Index(): React.ReactElement {
                 ? 'bg-primary text-primary-foreground' 
                 : 'bg-secondary text-secondary-foreground'}`}
             >
-              {message.content}
+              {message.role === 'user' ? (
+                message.content
+              ) : (
+                <MarkdownRenderer content={message.content} />
+              )}
             </div>
           </div>
         ))}
@@ -113,10 +125,10 @@ export default function Index(): React.ReactElement {
           </div>
         )}
         
-        {streamingMessage && !isThinking && (
+        {streamingMessage && (
           <div className="flex justify-start">
             <div className="max-w-[80%] rounded-lg p-3 bg-secondary text-secondary-foreground">
-              {streamingMessage}
+              <MarkdownRenderer content={streamingMessage} />
             </div>
           </div>
         )}
