@@ -13,8 +13,9 @@
         "inertiajs/inertia-laravel": "^2.0",
         "laravel/framework": "^12.0",
         "laravel/tinker": "^2.10.1",
-        "prism-php/prism": "^0.83.2",
-        "tightenco/ziggy": "^2.4"
+        "prism-php/prism": "^0.60.0",
+        "tightenco/ziggy": "^2.4",
+        "vizra/vizra-adk": "^0.0.17"
     },
     "require-dev": {
         "fakerphp/faker": "^1.23",
