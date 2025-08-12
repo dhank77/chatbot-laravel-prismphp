@@ -47,7 +47,7 @@ class CustomerSupportAgent
             $response = Prism::text()
                 ->using($this->provider, $this->model)
                 ->withPrompt($prompt)
-                ->generate();
+                ->asText();
 
             return $response->text;
 
